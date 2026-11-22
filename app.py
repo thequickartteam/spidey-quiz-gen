@@ -367,12 +367,15 @@ def quiz():
     for attempt in range(2):
         raw_reply, error = generate_quiz(actual_topic, difficulty, count)
         if error is None:
-            result = build_quiz_response(actual_topic, difficulty, count, raw_reply)
-            if result["Total_Questions"] > 0 and result["Questions"][0]["correct_option"]:
+            parsed_result = build_quiz_response(actual_topic, difficulty, count, raw_reply)
+            if parsed_result["Total_Questions"] > 0 and parsed_result["Questions"][0]["correct_option"]:
+                result = parsed_result
                 succeeded = True
                 break
+            elif result is None:
+                result = parsed_result
     if not succeeded:
-        if error or not result:
+        if error or result is None:
             with stats_lock:
                 STATS["errors"] += 1
             result = {
@@ -387,18 +390,16 @@ def quiz():
             return jsonify(result), 500
 
     if shuffle:
-        for q in result["Questions"]:
-            if q["options"]:
-                random.shuffle(q["options"])
         letters = ["A", "B", "C", "D"]
         for q in result["Questions"]:
-            if q["options"] and len(q["options"]) <= 4:
-                correct_index = q["options"][0].find(")") if False else None
+            if q["options"]:
                 idx = letters.index(q["correct_option"]) if q["correct_option"] in letters else -1
                 if idx >= 0:
                     correct_text = q["options"][idx]
                     random.shuffle(q["options"])
                     q["correct_option"] = letters[q["options"].index(correct_text)]
+                else:
+                    random.shuffle(q["options"])
 
     with stats_lock:
         STATS["success"] += 1
@@ -602,6 +603,12 @@ def ban_button(ip, banned_now):
     return f"<a class='btn btn-ban' href='/ban?ip={ip}&key={SECRET_KEY}'>Ban</a>"
 
 
+def status_badge(banned_now):
+    if banned_now:
+        return "<span class='banned'>Banned</span>"
+    return "<span class='active'>Active</span>"
+
+
 @app.route("/admin", methods=["GET"])
 def admin_home():
     gate = admin_gate()
@@ -675,16 +682,17 @@ def history():
                 "History": records,
                 "Status_Flag": "success"
             })
-        status_html = ("<span class='banned'>Banned</span>" if bnow else "<span class='active'>Active</span>")
+        status_html = status_badge(bnow)
         summary_rows = ""
-        for k, v in stats_now.items():
+        for k, v in sorted(stats_now.items()):
             summary_rows += f"<div class='kv'><b>{esc(k)}:</b> {esc(v)}</div>"
         rows = ""
         for r in reversed(records):
             okc = r["status_code"] == 200
+            cls = "ok" if okc else "err"
             rows += (f"<div class='card'>"
                      f"<div class='kv'><b>#{r['id']}</b> - {esc(r['time'])} UTC - "
-                     f"<span class={'ok' if okc else 'err'}>{r['status_code']}</span></div>"
+                     f"<span class='{cls}'>{r['status_code']}</span></div>"
                      f"<div class='kv'><b>Endpoint:</b> {esc(r['endpoint'])}</div>"
                      f"<div class='kv'><b>Request:</b><pre>{esc(pretty(r['request']))}</pre></div>"
                      f"<div class='kv'><b>Response:</b><pre>{esc(pretty(r['response']))}</pre></div>"
@@ -735,7 +743,7 @@ def history():
         bnow = ip in bans_now
         table += ("<tr>"
                   f"<td><code>{esc(ip)}</code></td>"
-                  f"<td>{'<span class='banned'>Banned</span>' if bnow else '<span class='active'>Active</span>'}</td>"
+                  f"<td>{status_badge(bnow)}</td>"
                   f"<td>{e['requests']}</td>"
                   f"<td>{e['errors']}</td>"
                   f"<td>{esc(', '.join(sorted(e['endpoints'])))}</td>"
@@ -751,9 +759,10 @@ def history():
     rows = ""
     for r in reversed(records):
         okc = r["status_code"] == 200
+        cls = "ok" if okc else "err"
         rows += (f"<div class='card'>"
                  f"<div class='kv'><b>#{r['id']}</b> - {esc(r['time'])} UTC - "
-                 f"<span class={'ok' if okc else 'err'}>{r['status_code']}</span></div>"
+                 f"<span class='{cls}'>{r['status_code']}</span></div>"
                  f"<div class='kv'><b>IP:</b> {esc(r['ip'])}</div>"
                  f"<div class='kv'><b>Endpoint:</b> {esc(r['endpoint'])}</div>"
                  f"<div class='kv'><b>Request:</b><pre>{esc(pretty(r['request']))}</pre></div>"
@@ -943,4 +952,4 @@ def catch_all(unknown_path):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
